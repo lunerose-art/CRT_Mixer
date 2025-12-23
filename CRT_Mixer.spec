@@ -6,12 +6,13 @@ a = Analysis(
     ['CRT_Mixer.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('logo.svg', '.'), ('HelveticaNeue.ttc', '.')],
     hiddenimports=[
         'PIL._tkinter_finder',
         'PyQt5.QtCore',
         'PyQt5.QtGui',
         'PyQt5.QtWidgets',
+        'PyQt5.QtSvg',
         'numpy',
         'scipy',
         'scipy.ndimage',
@@ -61,7 +62,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='CRT Mixer.app',
-    icon=None,  # Add your .icns file path here if you have an icon
+    icon='icon.icns',
     bundle_identifier='com.lune.crtmixer',
     info_plist={
         'NSPrincipalClass': 'NSApplication',

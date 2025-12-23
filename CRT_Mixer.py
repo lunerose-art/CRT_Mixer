@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 
@@ -5,6 +6,7 @@ from PIL import Image
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
+    QAction,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -13,6 +15,7 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -22,7 +25,9 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from artifacting import apply_artifacting
 from crt_filter import apply_crt_filter
+from noise_overlay import apply_noise_overlay
 from pixel_sorter_parallel import sort_all_pixels, sort_pixels_parallel
 from rgb_distortion import (
     apply_channel_swap,
@@ -135,6 +140,12 @@ class PixelSorterApp(QMainWindow):
         super().__init__()
         self.input_path = None
         self.is_video = False
+        self.recent_files = []
+        self.recent_projects = []
+        self.max_recent_files = 10
+        self.max_recent_projects = 10
+        self.load_recent_files()
+        self.load_recent_projects()
         self.init_ui()
         self.live_preview_enabled = False
         self.preview_timer = None
@@ -143,6 +154,9 @@ class PixelSorterApp(QMainWindow):
     def init_ui(self):
         self.setWindowTitle("CRT Mixer")
         self.setGeometry(100, 100, 1000, 800)
+
+        # Create menu bar
+        self.create_menu_bar()
 
         # Central widget with scroll area
         central_widget = QWidget()
@@ -163,11 +177,29 @@ class PixelSorterApp(QMainWindow):
         scroll.setWidget(scroll_content)
         outer_layout.addWidget(scroll)
 
-        # Title
+        # Header with title and logo
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(10, 10, 10, 10)
+
+        # Title on the left
         title = QLabel("CRT Mixer")
-        title.setStyleSheet("font-size: 24px; font-weight: bold; padding: 10px;")
-        title.setAlignment(Qt.AlignCenter)
-        main_layout.addWidget(title)
+        title.setStyleSheet("font-size: 24px; font-weight: bold;")
+        title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        header_layout.addWidget(title)
+
+        # Spacer
+        header_layout.addStretch()
+
+        # Logo on the right
+        logo_path = os.path.join(os.path.dirname(__file__), "logo.svg")
+        if os.path.exists(logo_path):
+            from PyQt5.QtSvg import QSvgWidget
+
+            svg_widget = QSvgWidget(logo_path)
+            svg_widget.setFixedSize(100, 40)  # Compact size matching title height
+            header_layout.addWidget(svg_widget)
+
+        main_layout.addLayout(header_layout)
 
         # File selection group
         file_group = QGroupBox("File Selection")
@@ -409,6 +441,82 @@ class PixelSorterApp(QMainWindow):
         crt_group.setLayout(crt_layout_main)
         main_layout.addWidget(crt_group)
 
+        # Noise Overlay group
+        noise_group = QGroupBox("Noise Overlay")
+        noise_layout_main = QVBoxLayout()
+
+        # Enable checkbox
+        self.noise_check = QCheckBox("Apply noise overlay")
+        noise_layout_main.addWidget(self.noise_check)
+
+        # Noise type
+        noise_type_layout = QHBoxLayout()
+        noise_type_layout.addWidget(QLabel("Noise Type:"))
+        self.noise_type_combo = QComboBox()
+        self.noise_type_combo.addItems(["Gaussian", "Film Grain", "Salt & Pepper"])
+        noise_type_layout.addWidget(self.noise_type_combo)
+        noise_type_layout.addStretch()
+        noise_layout_main.addLayout(noise_type_layout)
+
+        # Noise intensity
+        intensity_layout = QHBoxLayout()
+        intensity_layout.addWidget(QLabel("Intensity:"))
+        self.noise_intensity_slider = QSlider(Qt.Horizontal)
+        self.noise_intensity_slider.setMinimum(0)
+        self.noise_intensity_slider.setMaximum(100)
+        self.noise_intensity_slider.setValue(10)
+        intensity_layout.addWidget(self.noise_intensity_slider)
+        self.noise_intensity_label = QLabel("0.10")
+        self.noise_intensity_label.setStyleSheet("font-weight: bold; min-width: 50px;")
+        self.noise_intensity_slider.valueChanged.connect(
+            lambda v: self.noise_intensity_label.setText(f"{v / 100:.2f}")
+        )
+        intensity_layout.addWidget(self.noise_intensity_label)
+        noise_layout_main.addLayout(intensity_layout)
+
+        noise_group.setLayout(noise_layout_main)
+        main_layout.addWidget(noise_group)
+
+        # Artifacting group
+        artifact_group = QGroupBox("Artifacting")
+        artifact_layout_main = QVBoxLayout()
+
+        # Enable checkbox
+        self.artifact_check = QCheckBox("Apply artifacting")
+        artifact_layout_main.addWidget(self.artifact_check)
+
+        # Artifact type
+        artifact_type_layout = QHBoxLayout()
+        artifact_type_layout.addWidget(QLabel("Artifact Type:"))
+        self.artifact_type_combo = QComboBox()
+        self.artifact_type_combo.addItems(
+            ["JPEG Compression", "VHS Tracking", "Digital Glitch", "Color Bleed"]
+        )
+        artifact_type_layout.addWidget(self.artifact_type_combo)
+        artifact_type_layout.addStretch()
+        artifact_layout_main.addLayout(artifact_type_layout)
+
+        # Artifact intensity
+        artifact_intensity_layout = QHBoxLayout()
+        artifact_intensity_layout.addWidget(QLabel("Intensity:"))
+        self.artifact_intensity_slider = QSlider(Qt.Horizontal)
+        self.artifact_intensity_slider.setMinimum(0)
+        self.artifact_intensity_slider.setMaximum(100)
+        self.artifact_intensity_slider.setValue(50)
+        artifact_intensity_layout.addWidget(self.artifact_intensity_slider)
+        self.artifact_intensity_label = QLabel("0.50")
+        self.artifact_intensity_label.setStyleSheet(
+            "font-weight: bold; min-width: 50px;"
+        )
+        self.artifact_intensity_slider.valueChanged.connect(
+            lambda v: self.artifact_intensity_label.setText(f"{v / 100:.2f}")
+        )
+        artifact_intensity_layout.addWidget(self.artifact_intensity_label)
+        artifact_layout_main.addLayout(artifact_intensity_layout)
+
+        artifact_group.setLayout(artifact_layout_main)
+        main_layout.addWidget(artifact_group)
+
         # Preview area
         preview_group = QGroupBox("Preview")
         preview_layout = QVBoxLayout()
@@ -464,6 +572,422 @@ class PixelSorterApp(QMainWindow):
         self.status_label.setStyleSheet("background-color: #e0e0e0; padding: 8px;")
         outer_layout.addWidget(self.status_label)
 
+    def create_menu_bar(self):
+        """Create the menu bar with File menu."""
+        menubar = self.menuBar()
+
+        # File menu
+        file_menu = menubar.addMenu("&File")
+
+        # Open action
+        open_action = QAction("&Open...", self)
+        open_action.setShortcut("Ctrl+O")
+        open_action.triggered.connect(self.select_file)
+        file_menu.addAction(open_action)
+
+        # Open Recent submenu
+        self.recent_menu = QMenu("Open &Recent", self)
+        file_menu.addMenu(self.recent_menu)
+        self.update_recent_menu()
+
+        file_menu.addSeparator()
+
+        # Save Project action
+        save_project_action = QAction("&Save Project...", self)
+        save_project_action.setShortcut("Ctrl+S")
+        save_project_action.triggered.connect(self.save_project)
+        file_menu.addAction(save_project_action)
+
+        # Load Project action
+        load_project_action = QAction("&Load Project...", self)
+        load_project_action.setShortcut("Ctrl+L")
+        load_project_action.triggered.connect(self.load_project)
+        file_menu.addAction(load_project_action)
+
+        # Load Recent Project submenu
+        self.recent_projects_menu = QMenu("Load Recent &Project", self)
+        file_menu.addMenu(self.recent_projects_menu)
+        self.update_recent_projects_menu()
+
+        file_menu.addSeparator()
+
+        # Quit action
+        quit_action = QAction("&Quit", self)
+        quit_action.setShortcut("Ctrl+Q")
+        quit_action.triggered.connect(self.close)
+        file_menu.addAction(quit_action)
+
+    def load_recent_files(self):
+        """Load recent files list from a config file."""
+        config_path = os.path.expanduser("~/.crt_mixer_recent")
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r") as f:
+                    self.recent_files = [
+                        line.strip() for line in f.readlines() if line.strip()
+                    ]
+                # Filter out files that no longer exist
+                self.recent_files = [f for f in self.recent_files if os.path.exists(f)]
+            except Exception as e:
+                print(f"Error loading recent files: {e}")
+                self.recent_files = []
+
+    def save_recent_files(self):
+        """Save recent files list to a config file."""
+        config_path = os.path.expanduser("~/.crt_mixer_recent")
+        try:
+            with open(config_path, "w") as f:
+                for file_path in self.recent_files[: self.max_recent_files]:
+                    f.write(file_path + "\n")
+        except Exception as e:
+            print(f"Error saving recent files: {e}")
+
+    def add_recent_file(self, file_path):
+        """Add a file to the recent files list."""
+        # Remove if already in list
+        if file_path in self.recent_files:
+            self.recent_files.remove(file_path)
+
+        # Add to beginning of list
+        self.recent_files.insert(0, file_path)
+
+        # Keep only max_recent_files
+        self.recent_files = self.recent_files[: self.max_recent_files]
+
+        # Save and update menu
+        self.save_recent_files()
+        self.update_recent_menu()
+
+    def update_recent_menu(self):
+        """Update the Open Recent menu with current recent files."""
+        self.recent_menu.clear()
+
+        if not self.recent_files:
+            no_recent_action = QAction("No Recent Files", self)
+            no_recent_action.setEnabled(False)
+            self.recent_menu.addAction(no_recent_action)
+        else:
+            for file_path in self.recent_files:
+                action = QAction(os.path.basename(file_path), self)
+                action.setToolTip(file_path)
+                action.triggered.connect(
+                    lambda checked, path=file_path: self.open_recent_file(path)
+                )
+                self.recent_menu.addAction(action)
+
+            self.recent_menu.addSeparator()
+
+            clear_action = QAction("Clear Recent Files", self)
+            clear_action.triggered.connect(self.clear_recent_files)
+            self.recent_menu.addAction(clear_action)
+
+    def open_recent_file(self, file_path):
+        """Open a file from the recent files list."""
+        if os.path.exists(file_path):
+            self.load_file(file_path)
+        else:
+            QMessageBox.warning(
+                self, "File Not Found", f"The file no longer exists:\n{file_path}"
+            )
+            # Remove from recent files
+            if file_path in self.recent_files:
+                self.recent_files.remove(file_path)
+                self.save_recent_files()
+                self.update_recent_menu()
+
+    def clear_recent_files(self):
+        """Clear the recent files list."""
+        self.recent_files = []
+        self.save_recent_files()
+        self.update_recent_menu()
+
+    def load_recent_projects(self):
+        """Load recent projects list from a config file."""
+        config_path = os.path.expanduser("~/.crt_mixer_recent_projects")
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r") as f:
+                    self.recent_projects = [
+                        line.strip() for line in f.readlines() if line.strip()
+                    ]
+                # Filter out projects that no longer exist
+                self.recent_projects = [
+                    f for f in self.recent_projects if os.path.exists(f)
+                ]
+            except Exception as e:
+                print(f"Error loading recent projects: {e}")
+                self.recent_projects = []
+
+    def save_recent_projects(self):
+        """Save recent projects list to a config file."""
+        config_path = os.path.expanduser("~/.crt_mixer_recent_projects")
+        try:
+            with open(config_path, "w") as f:
+                for project_path in self.recent_projects[: self.max_recent_projects]:
+                    f.write(project_path + "\n")
+        except Exception as e:
+            print(f"Error saving recent projects: {e}")
+
+    def add_recent_project(self, project_path):
+        """Add a project to the recent projects list."""
+        # Remove if already in list
+        if project_path in self.recent_projects:
+            self.recent_projects.remove(project_path)
+
+        # Add to beginning of list
+        self.recent_projects.insert(0, project_path)
+
+        # Keep only max_recent_projects
+        self.recent_projects = self.recent_projects[: self.max_recent_projects]
+
+        # Save and update menu
+        self.save_recent_projects()
+        self.update_recent_projects_menu()
+
+    def update_recent_projects_menu(self):
+        """Update the Load Recent Project menu with current recent projects."""
+        self.recent_projects_menu.clear()
+
+        if not self.recent_projects:
+            no_recent_action = QAction("No Recent Projects", self)
+            no_recent_action.setEnabled(False)
+            self.recent_projects_menu.addAction(no_recent_action)
+        else:
+            for project_path in self.recent_projects:
+                action = QAction(os.path.basename(project_path), self)
+                action.setToolTip(project_path)
+                action.triggered.connect(
+                    lambda checked, path=project_path: self.open_recent_project(path)
+                )
+                self.recent_projects_menu.addAction(action)
+
+            self.recent_projects_menu.addSeparator()
+
+            clear_action = QAction("Clear Recent Projects", self)
+            clear_action.triggered.connect(self.clear_recent_projects)
+            self.recent_projects_menu.addAction(clear_action)
+
+    def open_recent_project(self, project_path):
+        """Open a project from the recent projects list."""
+        if os.path.exists(project_path):
+            self.load_project_from_path(project_path)
+        else:
+            QMessageBox.warning(
+                self,
+                "Project Not Found",
+                f"The project file no longer exists:\n{project_path}",
+            )
+            # Remove from recent projects
+            if project_path in self.recent_projects:
+                self.recent_projects.remove(project_path)
+                self.save_recent_projects()
+                self.update_recent_projects_menu()
+
+    def clear_recent_projects(self):
+        """Clear the recent projects list."""
+        self.recent_projects = []
+        self.save_recent_projects()
+        self.update_recent_projects_menu()
+
+    def save_project(self):
+        """Save current project settings to a JSON file."""
+        if not self.input_path:
+            QMessageBox.warning(
+                self, "No Image", "Please load an image first before saving a project."
+            )
+            return
+
+        filename, _ = QFileDialog.getSaveFileName(
+            self, "Save Project", "", "CRT Mixer Project (*.crtmix);;All Files (*.*)"
+        )
+
+        if filename:
+            try:
+                project_data = {
+                    "version": "1.0",
+                    "input_file": self.input_path,
+                    "sorting": {
+                        "mode": self.mode_combo.currentText(),
+                        "direction": self.direction_combo.currentText(),
+                        "threshold": self.threshold_slider.value(),
+                        "reverse": self.reverse_check.isChecked(),
+                        "sort_all": self.sort_all_check.isChecked(),
+                        "no_sort": self.no_sort_check.isChecked(),
+                    },
+                    "rgb": {
+                        "channel_swap": self.channel_swap_combo.currentText(),
+                        "red_shift": self.red_shift.value(),
+                        "green_shift": self.green_shift.value(),
+                        "blue_shift": self.blue_shift.value(),
+                        "chromatic_aberration": self.chroma_slider.value(),
+                    },
+                    "crt": {
+                        "enabled": self.crt_check.isChecked(),
+                        "scanline_intensity": self.scanline_slider.value(),
+                        "scanline_thickness": self.scanline_thick_slider.value(),
+                        "scanline_count": self.scanline_count_slider.value(),
+                        "curvature": self.curvature_slider.value(),
+                        "brightness": self.crt_brightness_slider.value(),
+                        "phosphor_glow": self.phosphor_glow_slider.value(),
+                    },
+                    "noise": {
+                        "enabled": self.noise_check.isChecked(),
+                        "type": self.noise_type_combo.currentText(),
+                        "intensity": self.noise_intensity_slider.value(),
+                    },
+                    "artifacting": {
+                        "enabled": self.artifact_check.isChecked(),
+                        "type": self.artifact_type_combo.currentText(),
+                        "intensity": self.artifact_intensity_slider.value(),
+                    },
+                }
+
+                with open(filename, "w") as f:
+                    json.dump(project_data, f, indent=2)
+
+                # Add to recent projects
+                self.add_recent_project(filename)
+
+                self.status_label.setText(
+                    f"✓ Project saved: {os.path.basename(filename)}"
+                )
+                QMessageBox.information(
+                    self, "Success", f"Project saved to:\n{filename}"
+                )
+
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to save project: {e}")
+
+    def load_project(self):
+        """Load project settings from a JSON file (with file dialog)."""
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "Load Project", "", "CRT Mixer Project (*.crtmix);;All Files (*.*)"
+        )
+
+        if filename:
+            self.load_project_from_path(filename)
+
+    def load_project_from_path(self, filename):
+        """Load project settings from a specific file path."""
+        try:
+            with open(filename, "r") as f:
+                project_data = json.load(f)
+
+            # Load input file
+            if "input_file" in project_data:
+                input_file = project_data["input_file"]
+                if os.path.exists(input_file):
+                    self.load_file(input_file)
+                else:
+                    QMessageBox.warning(
+                        self,
+                        "Input File Not Found",
+                        f"The original input file was not found:\n{input_file}\n\nYou can load a different image manually.",
+                    )
+
+            # Load sorting settings
+            if "sorting" in project_data:
+                s = project_data["sorting"]
+                self.mode_combo.setCurrentText(s.get("mode", "brightness"))
+                self.direction_combo.setCurrentText(s.get("direction", "horizontal"))
+                self.threshold_slider.setValue(s.get("threshold", 80))
+                self.reverse_check.setChecked(s.get("reverse", False))
+                self.sort_all_check.setChecked(s.get("sort_all", False))
+                self.no_sort_check.setChecked(s.get("no_sort", False))
+
+            # Load RGB settings
+            if "rgb" in project_data:
+                r = project_data["rgb"]
+                self.channel_swap_combo.setCurrentText(r.get("channel_swap", "None"))
+                self.red_shift.setValue(r.get("red_shift", 0))
+                self.green_shift.setValue(r.get("green_shift", 0))
+                self.blue_shift.setValue(r.get("blue_shift", 0))
+                self.chroma_slider.setValue(r.get("chromatic_aberration", 0))
+
+            # Load CRT settings
+            if "crt" in project_data:
+                c = project_data["crt"]
+                self.crt_check.setChecked(c.get("enabled", False))
+                self.scanline_slider.setValue(c.get("scanline_intensity", 8))
+                self.scanline_thick_slider.setValue(c.get("scanline_thickness", 1))
+                self.scanline_count_slider.setValue(c.get("scanline_count", 600))
+                self.curvature_slider.setValue(c.get("curvature", 20))
+                self.crt_brightness_slider.setValue(c.get("brightness", 120))
+                self.phosphor_glow_slider.setValue(c.get("phosphor_glow", 0))
+
+            # Load noise settings
+            if "noise" in project_data:
+                n = project_data["noise"]
+                self.noise_check.setChecked(n.get("enabled", False))
+                self.noise_type_combo.setCurrentText(n.get("type", "Gaussian"))
+                self.noise_intensity_slider.setValue(n.get("intensity", 10))
+
+            # Load artifacting settings
+            if "artifacting" in project_data:
+                a = project_data["artifacting"]
+                self.artifact_check.setChecked(a.get("enabled", False))
+                self.artifact_type_combo.setCurrentText(
+                    a.get("type", "JPEG Compression")
+                )
+                self.artifact_intensity_slider.setValue(a.get("intensity", 50))
+
+            # Add to recent projects
+            self.add_recent_project(filename)
+
+            self.status_label.setText(f"✓ Project loaded: {os.path.basename(filename)}")
+            QMessageBox.information(
+                self, "Success", f"Project loaded from:\n{filename}"
+            )
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load project: {e}")
+
+    def load_file(self, filename):
+        """Load a file (extracted from select_file logic)."""
+        # Validate file exists and is readable
+        if not os.path.exists(filename):
+            QMessageBox.critical(self, "Error", "Selected file does not exist")
+            return
+
+        if not os.access(filename, os.R_OK):
+            QMessageBox.critical(self, "Error", "Cannot read selected file")
+            return
+
+        # Validate it's a valid image
+        try:
+            img = Image.open(filename)
+            img.verify()  # Verify it's a valid image
+            img.close()
+
+            # Reopen to get actual image (verify() closes the file)
+            img = Image.open(filename)
+            width, height = img.size
+            img.close()
+
+            # Check image size limits (max 8K resolution)
+            max_dimension = 8192
+            if width > max_dimension or height > max_dimension:
+                QMessageBox.warning(
+                    self,
+                    "Large Image Warning",
+                    f"Image is very large ({width}x{height}). Processing may be slow.\n\n"
+                    f"Recommended maximum: {max_dimension}x{max_dimension} pixels",
+                )
+
+            self.input_path = filename
+            self.file_label.setText(os.path.basename(filename))
+            self.load_image_preview(filename)
+            self.status_label.setText(
+                f"Image loaded: {os.path.basename(filename)} ({width}x{height})"
+            )
+
+            # Add to recent files
+            self.add_recent_file(filename)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Invalid image file: {e}")
+            return
+
     def select_file(self):
         filename, _ = QFileDialog.getOpenFileName(
             self,
@@ -473,46 +997,7 @@ class PixelSorterApp(QMainWindow):
         )
 
         if filename:
-            # Validate file exists and is readable
-            if not os.path.exists(filename):
-                QMessageBox.critical(self, "Error", "Selected file does not exist")
-                return
-
-            if not os.access(filename, os.R_OK):
-                QMessageBox.critical(self, "Error", "Cannot read selected file")
-                return
-
-            # Validate it's a valid image
-            try:
-                img = Image.open(filename)
-                img.verify()  # Verify it's a valid image
-                img.close()
-
-                # Reopen to get actual image (verify() closes the file)
-                img = Image.open(filename)
-                width, height = img.size
-                img.close()
-
-                # Check image size limits (max 8K resolution)
-                max_dimension = 8192
-                if width > max_dimension or height > max_dimension:
-                    QMessageBox.warning(
-                        self,
-                        "Large Image Warning",
-                        f"Image is very large ({width}x{height}). Processing may be slow.\n\n"
-                        f"Recommended maximum: {max_dimension}x{max_dimension} pixels",
-                    )
-
-                self.input_path = filename
-                self.file_label.setText(os.path.basename(filename))
-                self.load_image_preview(filename)
-                self.status_label.setText(
-                    f"Image loaded: {os.path.basename(filename)} ({width}x{height})"
-                )
-
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Invalid image file: {e}")
-                return
+            self.load_file(filename)
 
     def load_image_preview(self, path):
         try:
@@ -532,7 +1017,55 @@ class PixelSorterApp(QMainWindow):
         temp_files = []
 
         try:
-            # Step 1: Channel swap
+            print(f"[DEBUG] Starting apply_effects with input: {input_path}")
+            # Step 1: Noise Overlay (applied first)
+            if self.noise_check.isChecked():
+                temp0 = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
+                temp0.close()
+                temp_files.append(temp0.name)
+
+                noise_type_map = {
+                    "Gaussian": "gaussian",
+                    "Film Grain": "film_grain",
+                    "Salt & Pepper": "salt_pepper",
+                }
+                noise_type = noise_type_map.get(
+                    self.noise_type_combo.currentText(), "gaussian"
+                )
+
+                apply_noise_overlay(
+                    current_path,
+                    temp0.name,
+                    intensity=self.noise_intensity_slider.value() / 100,
+                    noise_type=noise_type,
+                )
+                current_path = temp0.name
+
+            # Step 2: Artifacting
+            if self.artifact_check.isChecked():
+                temp_art = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
+                temp_art.close()
+                temp_files.append(temp_art.name)
+
+                artifact_type_map = {
+                    "JPEG Compression": "jpeg",
+                    "VHS Tracking": "vhs",
+                    "Digital Glitch": "digital_glitch",
+                    "Color Bleed": "color_bleed",
+                }
+                artifact_type = artifact_type_map.get(
+                    self.artifact_type_combo.currentText(), "jpeg"
+                )
+
+                apply_artifacting(
+                    current_path,
+                    temp_art.name,
+                    intensity=self.artifact_intensity_slider.value() / 100,
+                    artifact_type=artifact_type,
+                )
+                current_path = temp_art.name
+
+            # Step 3: Channel swap
             swap_mode = self.channel_swap_combo.currentText()
             if swap_mode != "None":
                 temp1 = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
@@ -549,7 +1082,7 @@ class PixelSorterApp(QMainWindow):
                 apply_channel_swap(current_path, temp1.name, swap_map[swap_mode])
                 current_path = temp1.name
 
-            # Step 2: RGB Shift
+            # Step 4: RGB Shift
             if (
                 self.red_shift.value() != 0
                 or self.green_shift.value() != 0
@@ -568,7 +1101,7 @@ class PixelSorterApp(QMainWindow):
                 )
                 current_path = temp2.name
 
-            # Step 3: Chromatic Aberration
+            # Step 5: Chromatic Aberration
             if self.chroma_slider.value() > 0:
                 temp3 = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
                 temp3.close()
@@ -579,7 +1112,7 @@ class PixelSorterApp(QMainWindow):
                 )
                 current_path = temp3.name
 
-            # Step 4: Pixel sorting
+            # Step 6: Pixel sorting
             # Skip sorting if "No Sort" is checked
             if not self.no_sort_check.isChecked():
                 temp4 = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
@@ -605,7 +1138,7 @@ class PixelSorterApp(QMainWindow):
                     )
                 current_path = temp4.name
 
-            # Step 5: CRT Filter
+            # Step 7: CRT Filter
             if self.crt_check.isChecked():
                 temp5 = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
                 temp5.close()
@@ -699,6 +1232,20 @@ class PixelSorterApp(QMainWindow):
         self.crt_brightness_slider.valueChanged.connect(self.schedule_preview_update)
         self.phosphor_glow_slider.valueChanged.connect(self.schedule_preview_update)
 
+        # Noise controls
+        self.noise_check.stateChanged.connect(self.schedule_preview_update)
+        self.noise_type_combo.currentIndexChanged.connect(self.schedule_preview_update)
+        self.noise_intensity_slider.valueChanged.connect(self.schedule_preview_update)
+
+        # Artifacting controls
+        self.artifact_check.stateChanged.connect(self.schedule_preview_update)
+        self.artifact_type_combo.currentIndexChanged.connect(
+            self.schedule_preview_update
+        )
+        self.artifact_intensity_slider.valueChanged.connect(
+            self.schedule_preview_update
+        )
+
     def disconnect_live_preview_signals(self):
         """Disconnect all control signals."""
         signals = [
@@ -723,6 +1270,17 @@ class PixelSorterApp(QMainWindow):
             (self.curvature_slider.valueChanged, self.schedule_preview_update),
             (self.crt_brightness_slider.valueChanged, self.schedule_preview_update),
             (self.phosphor_glow_slider.valueChanged, self.schedule_preview_update),
+            # Noise controls
+            (self.noise_check.stateChanged, self.schedule_preview_update),
+            (self.noise_type_combo.currentIndexChanged, self.schedule_preview_update),
+            (self.noise_intensity_slider.valueChanged, self.schedule_preview_update),
+            # Artifacting controls
+            (self.artifact_check.stateChanged, self.schedule_preview_update),
+            (
+                self.artifact_type_combo.currentIndexChanged,
+                self.schedule_preview_update,
+            ),
+            (self.artifact_intensity_slider.valueChanged, self.schedule_preview_update),
         ]
 
         # Disconnect each signal individually
@@ -765,11 +1323,13 @@ class PixelSorterApp(QMainWindow):
 
         try:
             import tempfile
+            import traceback
 
             temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
             temp_path = temp_file.name
             temp_file.close()
 
+            print(f"[DEBUG] Preview: temp file = {temp_path}")
             self.apply_effects(self.input_path, temp_path, is_preview=True)
 
             # Load preview
@@ -778,7 +1338,13 @@ class PixelSorterApp(QMainWindow):
             self.status_label.setText("Preview complete")
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Processing failed: {e}")
+            import traceback
+
+            error_details = traceback.format_exc()
+            print(f"[ERROR] Preview failed: {error_details}")
+            QMessageBox.critical(
+                self, "Error", f"Processing failed: {e}\n\nCheck console for details."
+            )
             self.status_label.setText("Error occurred")
         finally:
             self.is_processing = False
