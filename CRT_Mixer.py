@@ -1172,6 +1172,11 @@ class PixelSorterApp(QMainWindow):
                     except (OSError, PermissionError) as e:
                         print(f"Warning: Could not delete temp file {temp_file}: {e}")
 
+            # Force garbage collection to free memory
+            import gc
+
+            gc.collect()
+
     def toggle_live_preview(self, state):
         """Enable or disable live preview mode."""
         from PyQt5.QtCore import QTimer
@@ -1185,6 +1190,33 @@ class PixelSorterApp(QMainWindow):
                 )
                 self.live_preview_check.setChecked(False)
                 return
+
+            # Warn about performance with many effects
+            effects_count = sum(
+                [
+                    self.noise_check.isChecked(),
+                    self.artifact_check.isChecked(),
+                    self.crt_check.isChecked(),
+                    not self.no_sort_check.isChecked(),
+                    self.channel_swap_combo.currentText() != "None",
+                    any(
+                        [
+                            self.red_shift.value(),
+                            self.green_shift.value(),
+                            self.blue_shift.value(),
+                        ]
+                    ),
+                    self.chroma_slider.value() > 0,
+                ]
+            )
+
+            if effects_count >= 3:
+                QMessageBox.information(
+                    self,
+                    "Live Preview",
+                    "You have multiple effects enabled. Live preview may be slow.\n\n"
+                    "Tip: Disable some effects or use the Preview button instead for better performance.",
+                )
 
             # Create timer for debounced updates
             if self.preview_timer is None:
@@ -1294,9 +1326,9 @@ class PixelSorterApp(QMainWindow):
     def schedule_preview_update(self):
         """Schedule a preview update after a short delay (debouncing)."""
         if self.live_preview_enabled and self.preview_timer:
-            # Restart timer - waits 500ms after last change
+            # Restart timer - waits 1000ms after last change (increased for stability)
             self.preview_timer.stop()
-            self.preview_timer.start(500)  # 500ms delay
+            self.preview_timer.start(1000)  # 1000ms delay
 
     def auto_preview(self):
         """Automatically update preview (called by timer)."""
